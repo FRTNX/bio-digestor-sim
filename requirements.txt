@@ -1,0 +1,3 @@
+freezegun
+fastapi
+uvicorn
