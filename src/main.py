@@ -2,7 +2,6 @@ from typing import List, Union
 from typing_extensions import TypedDict
 
 from datetime import datetime
-from freezegun import freeze_time
 
 import time
 import threading
@@ -10,7 +9,9 @@ import fastapi
 
 from starlette.middleware.cors import CORSMiddleware
 
-environment = Environment()
+from biodigestor import (Environment, MicroController, BioDigestor,
+    Pump, Agitator, BaseValve, AcidValve, PHSensor, TemperatureSensor)
+
 
 app = fastapi.FastAPI()
 
@@ -22,19 +23,69 @@ app.add_middleware(
     allow_headers=['*']
 )
 
-ACTIVE_SIMULATIONS: List[dict] = []
+
+ACTIVE_ENVIRONMENTS = []
 
 
-class temperatureDict(TypedDict):
-    unit: str
-    value: Union[int, float]
+def get_environment(environment_id):
+    for env in ACTIVE_ENVIRONMENTS:
+        if env.id == environment_id:
+             return env
+    raise Error('Environment fnot found.')
 
-@freeze_time('May 21, 2024 04:00', auto_tick_seconds=3)
-def simulated_time(environment):
-    """Updates an environment's time value based on specified interval."""
-    while environment._active:
-        environment.set_time(datetime.now())
-        time.sleep(1)
 
-sim_time_thread = threading.Thread(target=simulated_time, args=(environment,))
-sim_time_thread.start()
+@app.get('/bd/init')
+def create_simulation(system_id: str):
+    """Create a new ESP32-controlled bio-digestor."""
+    try:
+        p = Pump()
+        a = Agitator()
+        av = AcidValve()
+        bv = BaseValve()
+        ps = PHSensor()
+        ts = TemperatureSensor()
+
+        # init environment
+        env = Environment()
+
+        # init core components
+        mc = MicroController(env, p, av, bv, a)      # connect components to ESP32 micro-controller
+        bd = BioDigestor(env, p, av, bv, a) 
+        
+        ACTIVE_ENVIRONMENTS.append(env)
+        
+        # todo: return env, mc, and bd identifers
+        return { 'result': 'SUCCESS' }
+    except Exception as e:
+        return { 'error': str(e) }
+    
+
+@app.get('/bd/start')
+def start_simulation(environment_id: str):
+    """Start bio-digestor simulator."""
+    try:
+        env = get_environment(environment_id)
+        env.run()
+        return { 'result': 'SUCCESS' }
+    except Exception as e:
+        return { 'error': str(e) }
+
+
+@app.get('/bd/stop')
+def stop_simulation(environment_id: str):
+    """Stop bio-digestor simulation."""
+    try:
+        env = get_environment(environment_id)
+        env.stop()
+        return { 'result': 'SUCCESS' }
+    except Exception as e:
+        return { 'error': str(e) }
+
+
+@app.get('/bd/test')
+def create_simulation(environment_id: str):
+    """Run component tests."""
+    try:   
+        return { 'result': 'SUCCESS' }
+    except Exception as e:
+        return { 'error': str(e) }
