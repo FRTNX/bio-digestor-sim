@@ -11,7 +11,7 @@ emitter = events.EventEmitter()
 
 # simulator object types
 Celcius = Union[int, float]
-pH = Union[int, float]
+PotentialHydrogen = Union[int, float]
 
 class Environment:
     """Simulated environment for ESP32-controlled bio-digestor.
@@ -27,6 +27,7 @@ class Environment:
         self._time_step: int = 5                       # minutes
         self._update_interval: float = 0.1
         self._delta_start = self._time
+        self._delta_end = 60 * 60 * 24 * 3             # seconds * mins * hours * days; default 3 days
         self._elapsed_time = 0                         # seconds
         
         # self._temperature: Celcius = params.temperature
@@ -42,7 +43,8 @@ class Environment:
         
         return self._time.format(format)
             
-    def run(self):
+    def run(self, until=self._delta_end):
+        self._delta_end = until
         self._active = True
         update_thread = threading.Thread(target=self._tick)
         update_thread.start()
@@ -62,6 +64,9 @@ class Environment:
             self._elapsed_time = delta.total_seconds()
             time.sleep(self._update_interval)
             
+            if self._elapsed_time > self._delta_end:   # exit condition
+                self._active = False                   # deactivate on max duration
+            
 
 # todo: ensure at most one valve is open at any point in time
 class MicroController:
@@ -73,7 +78,7 @@ class MicroController:
         
         # incomming connections
         self._temperature_reading: Celcius = 0
-        self._pH_reading: pH = 0
+        self._pH_reading: PotentialHydrogen = 0
         
         # outgoing connections
         self._pump: Pump = pump
