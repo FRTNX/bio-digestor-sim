@@ -89,3 +89,4 @@ def create_simulation(environment_id: str):
         return { 'result': 'SUCCESS' }
     except Exception as e:
         return { 'error': str(e) }
+

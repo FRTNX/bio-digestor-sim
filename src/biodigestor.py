@@ -13,7 +13,6 @@ emitter = events.EventEmitter()
 Celcius = Union[int, float]
 pH = Union[int, float]
 
-
 class Environment:
     """Simulated environment for ESP32-controlled bio-digestor.
     
@@ -27,9 +26,15 @@ class Environment:
         self._time = arrow.utcnow()
         self._time_step: int = 5                       # minutes
         self._update_interval: float = 0.1
+        self._delta_start = self._time
+        self._elapsed_time = 0                         # seconds
         
         # self._temperature: Celcius = params.temperature
         # self._season = params.season
+    
+    @property
+    def elapsed_time(self):
+        return self._elapsed_time
     
     def get_time(self, format = 'HH:mm:ss', raw=False):
         if raw == True:
@@ -53,6 +58,8 @@ class Environment:
         while self._active:
             emitter.emit('tick')
             self._time = self._time.shift(minutes=self._time_step)
+            delta = self._time - self._delta_start
+            self._elapsed_time = delta.total_seconds()
             time.sleep(self._update_interval)
             
 
@@ -118,6 +125,7 @@ class MicroController:
         """
         state = {
             'time': self._environment.get_time(),  # technically a hack, but sihamba ngejubane
+            'elapsed_time': self._format_seconds(self._environment.elapsed_time),
             'temperature': self._temperature_reading,
             'pH': self._pH_reading,
             'pump': 'on' if self._pump.active else 'off',
@@ -173,8 +181,22 @@ class MicroController:
             if elapsed_time >= self._agitation_duration:
                 self._agitator.deactivate()
 
-        self._state()                                           # capture current mc state
+        self._state()                                           # capture current mc state        
             
+    def _format_seconds(self, seconds):
+        """Format seconds into human friendly format.
+
+        Args:
+            seconds (int): Integer seconds to be formatted
+
+        Returns:
+            str: Formatted time value.
+        """
+        days = int(seconds // (24 * 3600))
+        hours = int((seconds % (24 * 3600)) // 3600)
+        minutes = int((seconds % 3600) // 60)
+        seconds_ = int(seconds % 60)
+        return f"{days} d {hours} h {minutes} m {seconds_} s"
        
 class BioDigestor:
     """
