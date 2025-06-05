@@ -24,49 +24,48 @@ app.add_middleware(
 )
 
 
-ACTIVE_ENVIRONMENTS = []
+ACTIVE_ENVIRONMENT = []
 
 
 def get_environment(environment_id):
     for env in ACTIVE_ENVIRONMENTS:
-        if env.id == environment_id:
+        if env._id == environment_id:
              return env
-    raise Error('Environment fnot found.')
+    raise ValueError('Environment not found.')
 
 
 @app.get('/bd/init')
-def create_simulation(system_id: str):
+def create_simulation():
     """Create a new ESP32-controlled bio-digestor."""
     try:
+        # init environment
+        env = Environment()
+        
+        # init components
         p = Pump()
         a = Agitator()
         av = AcidValve()
         bv = BaseValve()
-        ps = PHSensor()
-        ts = TemperatureSensor()
-
-        # init environment
-        env = Environment()
-
-        # init core components
+        ps = PHSensor(env)
+        ts = TemperatureSensor(env)
+        
         mc = MicroController(env, p, av, bv, a)      # connect components to ESP32 micro-controller
         bd = BioDigestor(env, p, av, bv, a) 
+    
+        data = env.run()
         
-        ACTIVE_ENVIRONMENTS.append(env)
-        
-        # todo: return env, mc, and bd identifers
-        return { 'result': 'SUCCESS' }
+        return { 'data': data }
     except Exception as e:
         return { 'error': str(e) }
     
 
-@app.get('/bd/start')
+@app.get('/bd/tick')
 def start_simulation(environment_id: str):
     """Start bio-digestor simulator."""
     try:
-        env = get_environment(environment_id)
-        env.run()
-        return { 'result': 'SUCCESS' }
+        env = active_env
+        data = env.tick()
+        return { 'data': data }
     except Exception as e:
         return { 'error': str(e) }
 

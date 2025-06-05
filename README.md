@@ -12,7 +12,7 @@ pip install -r requirements.txt
 This will install everything you need to run the simulator. Once installed you can then run:
 
 ```
-uvicorn main:app --port 8001
+uvicorn main:app --port 8002
 ```
 Of course as of June 1 the code base isn't ready for these magic spells. These commands will come into play from June 3, but you'll never need to run them yourself. The information here is purely for your curiosity Kudzai. The final product will just involve you opening a web browser.
 
