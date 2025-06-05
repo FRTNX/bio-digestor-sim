@@ -30,7 +30,7 @@ class Environment:
         self._time_step: int = 5                       # minutes
         self._update_interval: float = 0.001
         self._delta_start = self._time
-        self._delta_end = 60 * 60 * 24 * 3             # seconds * mins * hours * days; default 3 days
+        self._delta_end = 60 * 60 * 12                 # seconds * mins * hours * days; 12H for testing
         self._elapsed_time = 0                         # seconds
         self._data = []
         # self._temperature: Celcius = params.temperature
