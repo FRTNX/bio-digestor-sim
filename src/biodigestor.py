@@ -28,7 +28,7 @@ class Environment:
         self._active: bool = False
         self._time = arrow.utcnow()
         self._time_step: int = 5                       # minutes
-        self._update_interval: float = 0.01
+        self._update_interval: float = 0.05
         self._delta_start = self._time
         self._delta_end = 60 * 60 * 12                 # seconds * mins * hours * days; 12H for testing
         self._elapsed_time = 0                         # seconds
