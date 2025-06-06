@@ -15,6 +15,17 @@ emitter = events.EventEmitter()
 Celcius = Union[int, float]
 PotentialHydrogen = Union[int, float]
 
+
+# p = Pump()
+# a = Agitator()
+# av = AcidValve()
+# bv = BaseValve()
+# ps = PHSensor(env)
+# ts = TemperatureSensor(env)
+
+# mc = MicroController(env, p, av, bv, a)      # connect components to ESP32 micro-controller
+# bd = BioDigestor(env, p, av, bv, a)          # connect components to bio-digestor
+
 class Environment:
     """Simulated environment for ESP32-controlled bio-digestor.
     
@@ -23,7 +34,7 @@ class Environment:
       to the `tick` event emitted by this class.
     """
     
-    def __init__(self):
+    def __init__(self, params = {}):
         self._id = uuid()
         self._active: bool = False
         self._time = arrow.utcnow()
@@ -32,10 +43,44 @@ class Environment:
         self._delta_start = self._time
         self._delta_end = 60 * 60 * 12                 # seconds * mins * hours * days; 12H for testing
         self._elapsed_time = 0                         # seconds
-        self._data = []
+        self._time_series = []
+        
+        # putting these in the environment for easy updates
+        # i: branching away from event emissions
+        # data structures and algorithms paying back dividends
+        self._pump = Pump()
+        self._agitator = Agitator()
+        self._acid_valve = AcidValve()
+        self._base_valve = BaseValve()
+        self._bio_digestor = BioDigestor(self)
+        self._temperature_sensor = TemperatureSensor(self)
+        self._pH_sensor = PHSensor(self)
+        self._micro_controller = MicroController(self)
+        
         # self._temperature: Celcius = params.temperature
         # self._season = params.season
     
+    def run(self, until=None):
+        if until:
+            self._delta_end = until
+            
+        self._active = True
+        
+        while self._active:
+            self._tick()
+            self._bio_digestor._update()
+            self._temperature_sensor._update()
+            self._pH_sensor._update()
+            self._micro_controller._update()
+            self._save_state()
+            
+        print('time series:', self._time_series)
+        return self._time_series
+    
+        
+    def stop(self):
+        self._active = False
+
     @property
     def elapsed_time(self):
         return self._elapsed_time
@@ -45,55 +90,63 @@ class Environment:
             return self._time
         
         return self._time.format(format)
-            
-    def run(self, until=None):
-        if until:
-            self._delta_end = until
-        self._active = True
-        update_thread = threading.Thread(target=self._tick)
-        update_thread.start()
-        while self._active:
-            pass
-        print('final data:', self._data)
-        return self._data
-        
-    def stop(self):
-        self._active = False
-        
-    def set_data(self, data):
-        """Set arbitrary data from micro-controller for easy export.
+    
+    def _format_seconds(self, seconds):
+        """Format seconds into human friendly format.
+
+        Args:
+            seconds (int): Integer seconds to be formatted
+
+        Returns:
+            str: Formatted time value.
         """
-        self._data.append(data)
+        days = int(seconds // (24 * 3600))
+        hours = int((seconds % (24 * 3600)) // 3600)
+        minutes = int((seconds % 3600) // 60)
+        seconds_ = int(seconds % 60)
+        return f"{days} d {hours} h {minutes} m {seconds_} s"
         
-    def tick(self):
+    def _save_state(self):
+        """Returns json representation of micro-controller state.
+
+        Returns:
+            dict: json dict of mc state.
+        """
+        state = {
+            'time': self.get_time(),
+            'elapsed_time': self._format_seconds(self.elapsed_time),
+            'temperature': self._bio_digestor._temperature,
+            'pH': self._bio_digestor._pH,
+            'pump': self._pump.active,
+            'acid_valve': self._acid_valve.active,
+            'base_valve': self._base_valve.active,
+            'agitator': self._agitator.active
+        }
+        
+        self._time_series.append(state)
+        
+        print(state)
+        
+        return state
+        
+    def _tick(self):
         """Manually move the environment forward by one time step. Called internally
         or by external client.
         """
-        emitter.emit(f'tick')
+        # emitter.emit(f'tick')
         self._time = self._time.shift(minutes=self._time_step)
         delta = self._time - self._delta_start
         self._elapsed_time = delta.total_seconds()
 
         if self._elapsed_time > self._delta_end:   # exit condition
             self._active = False                   # deactivate on max duration
-            
-        return self._data
-
-    def _tick(self):
-        """
-        The simulator's progression function. Iterates the environment and everything in it 
-        forward by 1 time step.
-        """
-        while self._active:
-            self.tick()
-            time.sleep(self._update_interval)
-            
+        
 
 # todo: ensure at most one valve is open at any point in time
 class MicroController:
     """Simulated ESP32 Micro-controller."""
     
-    def __init__(self, env, pump, acid_valve, base_valve, agitator):
+    def __init__(self, env):
         self._environment: Environment = env
         self._time_series: List[dict] = []                      # records micro-controller state changes
         
@@ -102,10 +155,13 @@ class MicroController:
         self._pH_reading: PotentialHydrogen = 0
         
         # outgoing connections
-        self._pump: Pump = pump
-        self._acid_valve: AcidValve = acid_valve
-        self._base_valve: BaseValve = base_valve
-        self._agitator: Agitator = agitator
+        self._pump: Pump = env._pump
+        self._acid_valve: AcidValve = env._acid_valve
+        self._base_valve: BaseValve = env._base_valve
+        self._agitator: Agitator = env._agitator
+        
+        self._temperature_sensor = env._temperature_sensor
+        self._pH_sensor = env._pH_sensor
         
         # agitator config
         self._agitation_duration: int = 15                # minutes
@@ -122,10 +178,10 @@ class MicroController:
         self._agitator.activate(self._environment.get_time(raw=True))
         
         # register event handlers
-        emitter.on(f'tick', self._update)
-        # sensor event handlers
-        emitter.on(f'TEMPERATURE_CHANGE', self._set_temperature)
-        emitter.on(f'PH_CHANGE', self._set_pH)
+        # emitter.on(f'tick', self._update)
+        # # sensor event handlers
+        # emitter.on(f'TEMPERATURE_CHANGE', self._set_temperature)
+        # emitter.on(f'PH_CHANGE', self._set_pH)
     
     def _set_temperature(self, value):
         """temperature sensor event handler.
@@ -143,36 +199,16 @@ class MicroController:
         """
         self._pH_reading = value
         
-    def _state(self):
-        """Returns json representation of micro-controller state.
-
-        Returns:
-            dict: json dict of mc state.
-        """
-        state = {
-            'time': self._environment.get_time(),  # technically a hack, but sihamba ngejubane
-            'elapsed_time': self._format_seconds(self._environment.elapsed_time),
-            'temperature': self._temperature_reading,
-            'pH': self._pH_reading,
-            'pump': self._pump.active,
-            'acid_valve': self._acid_valve.active,
-            'base_valve': self._base_valve.active,
-            'agitator': self._agitator.active
-        }
-        
-        self._time_series.append(state)
-        self._environment.set_data(state)
-        
-        print(state)
-        
-        return state
-        
     def _update(self):
         """Make a routine state update. Typically triggered by the environment emitting a tick.
         
         NOTES:
           - Agitation is performed on pH corrections and routinely every 4 hours for 15 minutes.
         """
+        # get sensor data
+        self._temperature_reading = self._temperature_sensor.get_temperature()
+        self._pH_reading = self._pH_sensor.get_pH()
+        
         # pH corrections
         if self._temperature_reading < self._target_temperature and not self._pump.active:
             self._pump.activate()
@@ -208,48 +244,42 @@ class MicroController:
             
             if elapsed_time >= self._agitation_duration:
                 self._agitator.deactivate()
-
-        self._state()                                           # capture current mc state        
-            
-    def _format_seconds(self, seconds):
-        """Format seconds into human friendly format.
-
-        Args:
-            seconds (int): Integer seconds to be formatted
-
-        Returns:
-            str: Formatted time value.
-        """
-        days = int(seconds // (24 * 3600))
-        hours = int((seconds % (24 * 3600)) // 3600)
-        minutes = int((seconds % 3600) // 60)
-        seconds_ = int(seconds % 60)
-        return f"{days} d {hours} h {minutes} m {seconds_} s"
        
 class BioDigestor:
     """
     Simulated bio-digestor containing slurry.
     """
-    def __init__(self, env, pump, acid_valve, base_valve, agitator):
+    def __init__(self, env):
         self._environment = env
         # connect external components
-        self._pump = pump
-        self._acid_valve = acid_valve
-        self._base_valve = base_valve
-        self._agitator = agitator
+        self._pump = env._pump
+        self._acid_valve = env._acid_valve
+        self._base_valve = env._base_valve
+        self._agitator = env._agitator
         
         # intial conditions
         self._base_temperature = 37      # todo: correlate to environment
         self._temperature = 37
         self._pH = 7.9                   # require acid dose on simulation start
         
+        print('starting temp:', self._base_temperature)
+        print('starting pH:', self._pH)
+        
         # register event handlers
-        emitter.on('tick', self._update)
+        # emitter.on('tick', self._update)
         
-        # emit initial state
-        emitter.emit(f'INIT_TEMPERATURE', value=self._base_temperature)
-        emitter.emit(f'INIT_PH', value=self._pH)
+        # # emit initial state
+        # emitter.emit(f'INIT_TEMPERATURE', value=self._base_temperature)
+        # emitter.emit(f'INIT_PH', value=self._pH)
         
+    @property
+    def temperature(self):
+        return self._temperature
+    
+    @property
+    def pH(self):
+        return self._pH
+         
     # todo: normalise pH and temperature changes, correlate to time delta
     def _update(self):
         """Perform a routine state update. Typically triggered by the environment emitting a tick.
@@ -260,25 +290,25 @@ class BioDigestor:
         """
         if self._acid_valve.active:
             self._pH -= 0.2
-            emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
+            # emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
       
         if self._base_valve.active:
             self._pH += 0.2
-            emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
+            # emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
             
         if self._pump.active:
             self._temperature += 0.5
-            emitter.emit(f'DIGESTOR_TEMP_CHANGE', value=self._temperature)
+            # emitter.emit(f'DIGESTOR_TEMP_CHANGE', value=self._temperature)
             
         if not self._pump.active and self._temperature > self._base_temperature:
             # biodigestor contents will slowly cool to initial temperature when heat pump is off
             self._temperature -= 0.2
-            emitter.emit(f'DIGESTOR_TEMP_CHANGE', value=self._temperature)
+            # emitter.emit(f'DIGESTOR_TEMP_CHANGE', value=self._temperature)
             
         if not self._base_valve.active:
             # biodigestor contents will slowly become more acidic when base solenoid valve is closed
             self._pH -= 0.1
-            emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
+            # emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
 
 
 class TemperatureSensor:
@@ -287,17 +317,17 @@ class TemperatureSensor:
     """
     def __init__(self, env):
         self._environment = env
+        self._bio_digestor = env._bio_digestor
         self._temperature = 0
     
-        emitter.on(f'INIT_TEMPERATURE', self._set_temperature)
-        emitter.on(f'DIGESTOR_TEMP_CHANGE', self._set_temperature)
+        # emitter.on(f'INIT_TEMPERATURE', self._set_temperature)
+        # emitter.on(f'DIGESTOR_TEMP_CHANGE', self._set_temperature)
         
     def get_temperature(self):
         return self._temperature
-    
-    def _set_temperature(self, value):
-        self._temperature = value
-        emitter.emit(f'TEMPERATURE_CHANGE', value=self._temperature)
+        
+    def _update(self):
+        self._temperature = self._bio_digestor.temperature
 
 
 class PHSensor:
@@ -306,17 +336,17 @@ class PHSensor:
     """
     def __init__(self, env):
         self._environment = env
+        self._bio_digestor = env._bio_digestor
         self._pH = 0
         
-        emitter.on('INIT_PH', self._set_pH)
-        emitter.on('DIGESTOR_PH_CHANGE', self._set_pH)
+        # emitter.on('INIT_PH', self._set_pH)
+        # emitter.on('DIGESTOR_PH_CHANGE', self._set_pH)
         
     def get_pH(self):
         return self._pH
-    
-    def _set_pH(self, value):
-        self._pH = value
-        emitter.emit('PH_CHANGE', value=self._pH)
+        
+    def _update(self):
+        self._pH = self._bio_digestor.pH
 
 
 class Component(metaclass=ABCMeta):
@@ -419,17 +449,5 @@ class AcidValve(Component):
 
 if __name__ == '__main__':    
     # init environment
-    env = Environment()
-    
-    # init components
-    p = Pump()
-    a = Agitator()
-    av = AcidValve()
-    bv = BaseValve()
-    ps = PHSensor(env)
-    ts = TemperatureSensor(env)
-    
-    mc = MicroController(env, p, av, bv, a)      # connect components to ESP32 micro-controller
-    bd = BioDigestor(env, p, av, bv, a)          # connect components to bio-digestor
-    
+    env = Environment()    
     env.run()                                    # run simulation

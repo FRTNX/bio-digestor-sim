@@ -38,20 +38,7 @@ def get_environment(environment_id):
 def create_simulation():
     """Create a new ESP32-controlled bio-digestor."""
     try:
-        # init environment
-        env = Environment()
-        
-        # init components
-        p = Pump()
-        a = Agitator()
-        av = AcidValve()
-        bv = BaseValve()
-        ps = PHSensor(env)
-        ts = TemperatureSensor(env)
-        
-        mc = MicroController(env, p, av, bv, a)      # connect components to ESP32 micro-controller
-        bd = BioDigestor(env, p, av, bv, a) 
-    
+        env = Environment()    
         data = env.run()
         
         return { 'data': data }
