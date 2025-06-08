@@ -21,14 +21,15 @@ class Environment:
 
     def __init__(self, params = {}):
         self._id = uuid()
+        self._time_series = []
         self._active: bool = False
         self._time = arrow.utcnow()
         self._time_step: int = params['time_step'] if params['time_step'] else 5       # minutes
         self._delta_start = self._time
         self._delta_end = params['delta'] if params['delta'] else 60 * 60 * 12
-        self._elapsed_time = 0
-        self._time_series = []
+        self._elapsed_time: int = 0       
         
+        # initial temp and pH 
         self._starting_temperature = params['starting_temperature'] if params['starting_temperature'] else 20
         self._starting_pH = params['starting_pH'] if params['starting_pH'] else 8.8
         
@@ -61,8 +62,22 @@ class Environment:
             self._micro_controller._update()
             self._save_state()
             
-        print('time series:', self._time_series)
-        return self._time_series
+        result = {
+            'time_series': self._time_series,
+            'sim_results': {
+                'activations': {
+                    'pump': self._pump.activation_count,
+                    'agitator': self._agitator.activation_count,
+                    'acid_valve': self._acid_valve.activation_count,
+                    'base_valve': self._base_valve.activation_count
+                },
+                'optimum_temperature_delta': self._micro_controller._optimum_temperature_delta
+            }
+        }
+        
+        print('sim result:', result)
+        
+        return result
         
     def stop(self):
         self._active = False
@@ -154,10 +169,14 @@ class MicroController:
         
         # temperature config (+-55)
         self._temmperature_min: int = 52                 # degrees Celcius
-        self._temmperature_max: int = 58                  
+        self._temmperature_max: int = 58     
+        
+        # the time it takes to heat the bio-digestor to the optimum themperature
+        # of 55 degrees Celcius from starting temperature
+        self._optimum_temperature_delta = None             
         
         # agitate slurry on sim start
-        self._agitator.activate(self._environment.get_time(raw=True))
+        # self._agitator.activate(self._environment.get_time(raw=True))
     
     def _set_temperature(self, value):
         """temperature sensor event handler.
@@ -191,6 +210,9 @@ class MicroController:
             
         if self._temperature_reading >= self._temmperature_max and self._pump.active:
             self._pump.deactivate()
+            if not self._optimum_temperature_delta:
+                delta = self._environment.get_time(raw=True) - self._environment._delta_start
+                self._optimum_temperature_delta = delta.total_seconds() / 60
             
         if self._pH_reading < self._pH_min and not self._base_valve.active:
             self._base_valve.activate()
@@ -198,6 +220,7 @@ class MicroController:
             
         if self._pH_reading >= self._pH_min and self._base_valve.active:
             self._base_valve.deactivate()
+            self._agitator.deactivate()
             
         if self._pH_reading > self._pH_max and not self._acid_valve.active:
             self._acid_valve.activate()
@@ -246,8 +269,23 @@ class BioDigestor:
     @property
     def pH(self):
         return self._pH
+
+    def _calculate_temperature_loss(self):
+        """
+        
+        """
+        heat_loss_per_minute = 1 / 33
+        temperature_loss = self._environment._time_step * heat_loss_per_minute
+        print(f'{temperature_loss} degrees celcius lost in {self._environment._time_step} minutes')
+        return temperature_loss
+    
+    def _caclulate_temperature_gains(self):
+        """Calculate temperature gained while heat pump on.
+        """
+        heat_gained_per_minute = 1
+        temperature_gained = self._environment._time_step * heat_gained_per_minute
+        return temperature_gained
          
-    # todo: normalise pH and temperature changes, correlate to time delta
     def _update(self):
         """Perform a routine state update. Typically triggered by the environment emitting a tick.
         
@@ -257,26 +295,20 @@ class BioDigestor:
         """
         if self._acid_valve.active:
             self._pH -= 0.2
-            # emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
       
         if self._base_valve.active:
             self._pH += 0.2
-            # emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
             
         if self._pump.active:
-            self._temperature += 0.5
-            # emitter.emit(f'DIGESTOR_TEMP_CHANGE', value=self._temperature)
+            self._temperature += self._caclulate_temperature_gains()
             
         if not self._pump.active and self._temperature > self._base_temperature:
             # biodigestor contents will slowly cool to initial temperature when heat pump is off
-            self._temperature -= 0.2
-            # emitter.emit(f'DIGESTOR_TEMP_CHANGE', value=self._temperature)
+            self._temperature -= self._calculate_temperature_loss()
             
         if not self._base_valve.active:
             # biodigestor contents will slowly become more acidic when base solenoid valve is closed
             self._pH -= 0.1
-            # emitter.emit(f'DIGESTOR_PH_CHANGE', value=self._pH)
-
 
 class TemperatureSensor:
     """
@@ -338,11 +370,16 @@ class Agitator(Component):
     """
     def __init__(self):
         self._active = False
+        self._activation_count = 0
         self._delta_start = 0        # stores most recent agitator activation time
         
     @property
     def active(self):
         return self._active
+    
+    @property
+    def activation_count(self):
+        return self._activation_count
 
     @property
     def delta_start(self):
@@ -353,6 +390,7 @@ class Agitator(Component):
     def activate(self, delta_start):
         self._active = True
         self._delta_start = delta_start
+        self._activation_count += 1
         
     def deactivate(self):
         self._active = False
@@ -364,13 +402,19 @@ class Pump(Component):
     """
     def __init__(self):
         self._active = False
+        self._activation_count = 0
         
     @property
     def active(self):
         return self._active
     
+    @property
+    def activation_count(self):
+        return self._activation_count
+    
     def activate(self):
         self._active = True
+        self._activation_count += 1
         
     def deactivate(self):
         self._active = False
@@ -382,13 +426,19 @@ class BaseValve(Component):
     """
     def __init__(self):
         self._active = False
+        self._activation_count = 0
         
     @property
     def active(self):
         return self._active
     
+    @property
+    def activation_count(self):
+        return self._activation_count
+    
     def activate(self):
         self._active = True
+        self._activation_count += 1
         
     def deactivate(self):
         self._active = False
@@ -400,13 +450,19 @@ class AcidValve(Component):
     """
     def __init__(self):
         self._active = False
+        self._activation_count = 0
         
     @property
     def active(self):
         return self._active
     
+    @property
+    def activation_count(self):
+        return self._activation_count
+    
     def activate(self):
         self._active = True
+        self._activation_count += 1
         
     def deactivate(self):
         self._active = False
