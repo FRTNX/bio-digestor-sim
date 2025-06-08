@@ -23,8 +23,13 @@ app.add_middleware(
     allow_headers=['*']
 )
 
+class EnvConfig(TypedDict):
+    time_step: int
+    delta: int
+    starting_temperature: Union[float, int]
+    starting_pH: Union[int, float]
 
-ACTIVE_ENVIRONMENT = []
+ACTIVE_ENVIRONMENTS = []
 
 
 def get_environment(environment_id):
@@ -34,45 +39,31 @@ def get_environment(environment_id):
     raise ValueError('Environment not found.')
 
 
-@app.get('/bd/init')
-def create_simulation():
+@app.post('/bd/init')
+def create_simulation(data: EnvConfig):
     """Create a new ESP32-controlled bio-digestor."""
+    print('params:', data)
     try:
-        env = Environment()    
+        params = {
+            'time_step': data['time_step'],
+            'delta': data['delta'],
+            'starting_temperature': data['starting_temperature'],
+            'starting_pH': data['starting_pH']
+        }
+        
+        env = Environment(params)
+ 
         data = env.run()
         
-        return { 'data': data }
+        return { 'data': data }                
     except Exception as e:
         return { 'error': str(e) }
     
 
-@app.get('/bd/tick')
-def start_simulation(environment_id: str):
-    """Start bio-digestor simulator."""
+@app.get('/bd/ping')
+def run_simulation():
+    """Ping the server."""
     try:
-        env = active_env
-        data = env.tick()
-        return { 'data': data }
+        return { 'message': 'pong' }
     except Exception as e:
         return { 'error': str(e) }
-
-
-@app.get('/bd/stop')
-def stop_simulation(environment_id: str):
-    """Stop bio-digestor simulation."""
-    try:
-        env = get_environment(environment_id)
-        env.stop()
-        return { 'result': 'SUCCESS' }
-    except Exception as e:
-        return { 'error': str(e) }
-
-
-@app.get('/bd/test')
-def create_simulation(environment_id: str):
-    """Run component tests."""
-    try:   
-        return { 'result': 'SUCCESS' }
-    except Exception as e:
-        return { 'error': str(e) }
-

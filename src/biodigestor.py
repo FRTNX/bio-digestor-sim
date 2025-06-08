@@ -15,38 +15,24 @@ emitter = events.EventEmitter()
 Celcius = Union[int, float]
 PotentialHydrogen = Union[int, float]
 
-
-# p = Pump()
-# a = Agitator()
-# av = AcidValve()
-# bv = BaseValve()
-# ps = PHSensor(env)
-# ts = TemperatureSensor(env)
-
-# mc = MicroController(env, p, av, bv, a)      # connect components to ESP32 micro-controller
-# bd = BioDigestor(env, p, av, bv, a)          # connect components to bio-digestor
-
 class Environment:
     """Simulated environment for ESP32-controlled bio-digestor.
-    
-    NOTES:
-    - Any component that needs to run every time step can simply subscribe
-      to the `tick` event emitted by this class.
     """
-    
+
     def __init__(self, params = {}):
         self._id = uuid()
         self._active: bool = False
         self._time = arrow.utcnow()
-        self._time_step: int = 5                       # minutes
-        self._update_interval: float = 0.1
+        self._time_step: int = params['time_step'] if params['time_step'] else 5       # minutes
         self._delta_start = self._time
-        self._delta_end = 60 * 60 * 12                 # seconds * mins * hours * days; 12H for testing
-        self._elapsed_time = 0                         # seconds
+        self._delta_end = params['delta'] if params['delta'] else 60 * 60 * 12
+        self._elapsed_time = 0
         self._time_series = []
         
+        self._starting_temperature = params['starting_temperature'] if params['starting_temperature'] else 20
+        self._starting_pH = params['starting_pH'] if params['starting_pH'] else 8.8
+        
         # putting these in the environment for easy updates
-        # i: branching away from event emissions
         # data structures and algorithms paying back dividends
         self._pump = Pump()
         self._agitator = Agitator()
@@ -56,9 +42,10 @@ class Environment:
         self._temperature_sensor = TemperatureSensor(self)
         self._pH_sensor = PHSensor(self)
         self._micro_controller = MicroController(self)
-        
-        # self._temperature: Celcius = params.temperature
-        # self._season = params.season
+
+    @property
+    def elapsed_time(self):
+        return self._elapsed_time
     
     def run(self, until=None):
         if until:
@@ -76,14 +63,9 @@ class Environment:
             
         print('time series:', self._time_series)
         return self._time_series
-    
         
     def stop(self):
         self._active = False
-
-    @property
-    def elapsed_time(self):
-        return self._elapsed_time
     
     def get_time(self, format = 'HH:mm', raw=False):
         if raw == True:
@@ -124,7 +106,6 @@ class Environment:
         }
         
         self._time_series.append(state)
-        
         print(state)
         
         return state
@@ -171,17 +152,12 @@ class MicroController:
         self._pH_max: float = 7.4
         self._pH_min: float = 6.8
         
-        # temperature config
-        self._target_temperature: int = 55                # degrees Celcius
+        # temperature config (+-55)
+        self._temmperature_min: int = 52                 # degrees Celcius
+        self._temmperature_max: int = 58                  
         
         # agitate slurry on sim start
         self._agitator.activate(self._environment.get_time(raw=True))
-        
-        # register event handlers
-        # emitter.on(f'tick', self._update)
-        # # sensor event handlers
-        # emitter.on(f'TEMPERATURE_CHANGE', self._set_temperature)
-        # emitter.on(f'PH_CHANGE', self._set_pH)
     
     def _set_temperature(self, value):
         """temperature sensor event handler.
@@ -210,10 +186,10 @@ class MicroController:
         self._pH_reading = self._pH_sensor.get_pH()
         
         # pH corrections
-        if self._temperature_reading < self._target_temperature and not self._pump.active:
+        if self._temperature_reading < self._temmperature_min and not self._pump.active:
             self._pump.activate()
             
-        if self._temperature_reading >= self._target_temperature and self._pump.active:
+        if self._temperature_reading >= self._temmperature_max and self._pump.active:
             self._pump.deactivate()
             
         if self._pH_reading < self._pH_min and not self._base_valve.active:
@@ -258,19 +234,10 @@ class BioDigestor:
         self._agitator = env._agitator
         
         # intial conditions
-        self._base_temperature = 37      # todo: correlate to environment
-        self._temperature = 37
-        self._pH = 7.9                   # require acid dose on simulation start
-        
-        print('starting temp:', self._base_temperature)
-        print('starting pH:', self._pH)
-        
-        # register event handlers
-        # emitter.on('tick', self._update)
-        
-        # # emit initial state
-        # emitter.emit(f'INIT_TEMPERATURE', value=self._base_temperature)
-        # emitter.emit(f'INIT_PH', value=self._pH)
+        self._base_temperature = env._starting_temperature
+        self._temperature = env._starting_temperature
+        self._pH = env._starting_pH
+    
         
     @property
     def temperature(self):
