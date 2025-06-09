@@ -174,9 +174,6 @@ class MicroController:
         # the time it takes to heat the bio-digestor to the optimum themperature
         # of 55 degrees Celcius from starting temperature
         self._optimum_temperature_delta = None             
-        
-        # agitate slurry on sim start
-        # self._agitator.activate(self._environment.get_time(raw=True))
     
     def _set_temperature(self, value):
         """temperature sensor event handler.
@@ -318,20 +315,21 @@ class BioDigestor:
             
         if self._pump.active:
             self._temperature += self._caclulate_temperature_gain()
+            self._temperature = self._capped(self._temperature, 58.3)   # ensure temperature doesn't exceed max
             
         if not self._pump.active and self._temperature > self._base_temperature:
             # biodigestor contents will slowly cool to initial temperature when heat pump is off
             self._temperature -= self._calculate_temperature_loss()
             
         if not self._base_valve.active:
-            # biodigestor contents will slowly become more acidic when base solenoid valve is closed
+            # biodigestor contents will slowly become more acidic when base solenoid valve is closed.
             # pH is known to take about 2 days to drop from 7.2 to 6.8, so we divide the difference
             # by the number of minutes in 2 days to get how much pH is lost per minute.
             # finally, we multply pH loss per minute by the time step to see how much pH has dropped
             # since the simulations last iteration. This may be fudged to make the sim more
             # eventful, so perhaps let 2 days = 1 day, all else being constant.
             # pH_loss_per_minute = (7.2 - 6.8) / (60 * 24 * 2)     # actual pH loss
-            pH_loss_per_minute = (7.2 - 6.8) / (60 * 15)          # fudged for eventfulness
+            pH_loss_per_minute = (7.2 - 6.8) / (60 * 15)           # fudged for eventfulness
             self._pH -= self._environment._time_step * pH_loss_per_minute
 
 class TemperatureSensor:
@@ -491,8 +489,6 @@ class AcidValve(Component):
     def deactivate(self):
         self._active = False
 
-
-# todo: consider how to measure energy cost then optimise
 
 if __name__ == '__main__':    
     # init environment
