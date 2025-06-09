@@ -220,7 +220,6 @@ class MicroController:
             
         if self._pH_reading >= self._pH_min and self._base_valve.active:
             self._base_valve.deactivate()
-            self._agitator.deactivate()
             
         if self._pH_reading > self._pH_max and not self._acid_valve.active:
             self._acid_valve.activate()
@@ -260,8 +259,7 @@ class BioDigestor:
         self._base_temperature = env._starting_temperature
         self._temperature = env._starting_temperature
         self._pH = env._starting_pH
-    
-        
+
     @property
     def temperature(self):
         return self._temperature
@@ -272,20 +270,39 @@ class BioDigestor:
 
     def _calculate_temperature_loss(self):
         """
-        
+        Natural heat loss when heat pump is off.
         """
         heat_loss_per_minute = 1 / 33
         temperature_loss = self._environment._time_step * heat_loss_per_minute
         print(f'{temperature_loss} degrees celcius lost in {self._environment._time_step} minutes')
         return temperature_loss
     
-    def _caclulate_temperature_gains(self):
+    def _caclulate_temperature_gain(self):
         """Calculate temperature gained while heat pump on.
         """
-        heat_gained_per_minute = 1
-        temperature_gained = self._environment._time_step * heat_gained_per_minute
-        return temperature_gained
+        heat_gain_per_minute = 1
+        temperature_gain = self._environment._time_step * heat_gain_per_minute
+        return self._capped(temperature_gain, 4)
+    
+    def _calculate_pH_loss(self):
+        """Triggered by acid dosing.
+        """
+        pH_loss_per_minute = (7.2 - 6) / 10            # inverse of base dosing
+        pH_loss = self._environment._time_step * pH_loss_per_minute
+        return pH_loss
+
+    def _calculate_pH_gain(self):
+        """ Triggered by base dosing.
+        """
+        pH_gain_per_minute = (7.2 - 6) / 10
+        pH_gain = self._environment._time_step * pH_gain_per_minute
+        return self._capped(pH_gain, 0.4)
          
+    def _capped(self, value, max_val):
+        if value > max_val:
+            return max_val
+        return value
+    
     def _update(self):
         """Perform a routine state update. Typically triggered by the environment emitting a tick.
         
@@ -294,13 +311,13 @@ class BioDigestor:
             The emitted event includes the current value for pH or temperature.
         """
         if self._acid_valve.active:
-            self._pH -= 0.2
+            self._pH -= self._calculate_pH_loss()
       
         if self._base_valve.active:
-            self._pH += 0.2
+            self._pH += self._calculate_pH_gain()
             
         if self._pump.active:
-            self._temperature += self._caclulate_temperature_gains()
+            self._temperature += self._caclulate_temperature_gain()
             
         if not self._pump.active and self._temperature > self._base_temperature:
             # biodigestor contents will slowly cool to initial temperature when heat pump is off
@@ -308,7 +325,14 @@ class BioDigestor:
             
         if not self._base_valve.active:
             # biodigestor contents will slowly become more acidic when base solenoid valve is closed
-            self._pH -= 0.1
+            # pH is known to take about 2 days to drop from 7.2 to 6.8, so we divide the difference
+            # by the number of minutes in 2 days to get how much pH is lost per minute.
+            # finally, we multply pH loss per minute by the time step to see how much pH has dropped
+            # since the simulations last iteration. This may be fudged to make the sim more
+            # eventful, so perhaps let 2 days = 1 day, all else being constant.
+            # pH_loss_per_minute = (7.2 - 6.8) / (60 * 24 * 2)     # actual pH loss
+            pH_loss_per_minute = (7.2 - 6.8) / (60 * 15)          # fudged for eventfulness
+            self._pH -= self._environment._time_step * pH_loss_per_minute
 
 class TemperatureSensor:
     """
